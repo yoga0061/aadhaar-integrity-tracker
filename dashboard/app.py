@@ -1,149 +1,69 @@
-import sys
-import os
+import sys, os
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
 
-# --------------------------------------------------
-# PATH SETUP
-# --------------------------------------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
-SRC_DIR = os.path.join(PROJECT_ROOT, "src")
-sys.path.append(SRC_DIR)
-
-# --------------------------------------------------
-# IMPORTS
-# --------------------------------------------------
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from sklearn.ensemble import IsolationForest
 
-# Import pipeline scripts
-import clean_and_merge_raw_data
-import preprocessing
-import anomaly_detection
-import risk_scoring
-import district_analysis
-import consolidate_results
-import export_html_report
-
-from utils import path
-
-# --------------------------------------------------
-# STREAMLIT CONFIG
-# --------------------------------------------------
-st.set_page_config(page_title="Aadhaar Integrity Dashboard", layout="wide")
-
+st.set_page_config(layout="wide")
 st.title("🛡️ Aadhaar Integrity & Anomaly Monitoring Dashboard")
 
-st.markdown(
-    """
-    <div style="
-        background-color:#E3F2FD;
-        padding:15px;
-        border-left:6px solid #0D47A1;
-        margin-bottom:20px;">
-        <b>🎯 Demo Mode (Hackathon)</b><br>
-        This app executes the full Aadhaar integrity analytics pipeline
-        and displays results in real time using anonymized data.
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown("""
+**🎯 Demo Mode**  
+This app generates all analytics dynamically during execution using anonymized data.
+""")
 
-# --------------------------------------------------
-# PIPELINE EXECUTION (CACHED)
-# --------------------------------------------------
-@st.cache_data(show_spinner=False)
-def run_pipeline():
-    """
-    Runs the complete analytics pipeline.
-    Cached so it runs only once unless inputs change.
-    """
-    clean_and_merge_raw_data.main()
-    preprocessing.main()
-    anomaly_detection.main()
-    risk_scoring.main()
-    district_analysis.main()
-    consolidate_results.main()
-    export_html_report.main()
+# ---------------- LOAD RAW DATA ----------------
+@st.cache_data
+def load_data():
+    return pd.read_csv("data/updates.csv")
 
-# --------------------------------------------------
-# RUN BUTTON
-# --------------------------------------------------
-if st.button("▶️ Run Aadhaar Integrity Analysis"):
-    with st.spinner("Running full analytics pipeline..."):
-        run_pipeline()
-    st.success("✅ Analysis completed successfully!")
+# ---------------- RUN ANALYSIS ----------------
+@st.cache_data
+def run_analysis(df):
+    # Aggregate
+    daily = df.groupby(["state","district","pincode","update_type"])["daily_updates"].sum().reset_index()
 
-# --------------------------------------------------
-# CHECK OUTPUTS
-# --------------------------------------------------
-risk_fp = path("outputs", "center_risk_scores.parquet")
-district_fp = path("outputs", "district_risk_index.parquet")
-updates_fp = path("outputs", "update_type_summary.parquet")
-html_fp = path("outputs", "aadhaar_integrity_full_report.html")
+    # Anomaly detection
+    iso = IsolationForest(contamination=0.01, random_state=42)
+    daily["anomaly"] = iso.fit_predict(daily[["daily_updates"]]) == -1
 
-if not os.path.exists(risk_fp):
-    st.info("Click ▶️ Run Aadhaar Integrity Analysis to generate outputs.")
-    st.stop()
+    # Risk scoring
+    risk = daily.groupby(["state","district","pincode"]).agg(
+        total_days=("daily_updates","count"),
+        anomaly_days=("anomaly","sum"),
+        max_spike=("daily_updates","max")
+    ).reset_index()
 
-# --------------------------------------------------
-# LOAD OUTPUTS
-# --------------------------------------------------
-risk = pd.read_parquet(risk_fp)
-district = pd.read_parquet(district_fp)
-updates = pd.read_parquet(updates_fp)
+    risk["risk_score"] = (
+        0.6 * (risk["anomaly_days"] / risk["total_days"]) +
+        0.4 * (risk["max_spike"] / risk["max_spike"].max())
+    ) * 100
 
-# --------------------------------------------------
-# METRICS
-# --------------------------------------------------
-st.subheader("📊 Key Indicators")
+    risk["severity"] = risk["risk_score"].apply(
+        lambda x: "Critical" if x >= 60 else "Medium" if x >= 30 else "Low"
+    )
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Critical Locations", (risk["severity"] == "Critical").sum())
-with col2:
-    st.metric("Medium Risk Locations", (risk["severity"] == "Medium").sum())
-with col3:
-    st.metric("Total Centers", len(risk))
+    return daily, risk
 
-# --------------------------------------------------
-# RISK DISTRIBUTION
-# --------------------------------------------------
-st.subheader("📍 Center-Level Risk Distribution")
-fig1 = px.histogram(risk, x="risk_score", color="severity", nbins=30)
-st.plotly_chart(fig1, use_container_width=True)
+# ---------------- UI ----------------
+if st.button("▶️ Run Integrity Analysis"):
+    with st.spinner("Running analytics..."):
+        df = load_data()
+        daily, risk = run_analysis(df)
+    st.success("Analysis completed")
 
-# --------------------------------------------------
-# DISTRICT TABLE
-# --------------------------------------------------
-st.subheader("🗺️ District-Level Risk Overview")
-st.dataframe(
-    district.sort_values("avg_risk_score", ascending=False),
-    use_container_width=True
-)
+    st.metric("Critical Locations", (risk["severity"]=="Critical").sum())
 
-# --------------------------------------------------
-# UPDATE TYPE ANOMALIES
-# --------------------------------------------------
-st.subheader("⚠️ Anomalies by Update Type")
-fig2 = px.bar(updates, x="update_type", y="anomaly_days")
-st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(
+        px.histogram(risk, x="risk_score", color="severity"),
+        use_container_width=True
+    )
 
-# --------------------------------------------------
-# HTML REPORT DOWNLOAD
-# --------------------------------------------------
-st.subheader("📄 Audit-Ready Report")
-if os.path.exists(html_fp):
-    with open(html_fp, "rb") as f:
-        st.download_button(
-            "⬇️ Download Full HTML Audit Report",
-            data=f,
-            file_name="aadhaar_integrity_full_report.html",
-            mime="text/html"
-        )
-
-# --------------------------------------------------
-# DATA PREVIEW
-# --------------------------------------------------
-with st.expander("🔍 View Sample Center Risk Data"):
-    st.dataframe(risk.head(20))
+    st.subheader("District Risk Overview")
+    st.dataframe(
+        risk.groupby(["state","district"])["risk_score"].mean().reset_index()
+        .sort_values("risk_score", ascending=False),
+        use_container_width=True
+    )
