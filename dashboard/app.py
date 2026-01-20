@@ -21,13 +21,12 @@ st.set_page_config(
     page_title="Aadhaar Sentinel – Integrity Dashboard",
     layout="wide"
 )
-
 st.markdown(
     """
     <div style="
-        background:#FFFFFF;
+        background:#E3F2FD;
         padding:16px;
-        border:1px solid #CCCCCC;
+        border-left:6px solid #0D47A1;
         color:#000000;
         font-size:16px;
     ">
@@ -37,6 +36,7 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
 
 st.title("🛡️ Aadhaar Sentinel – Integrity Intelligence Dashboard")
 
