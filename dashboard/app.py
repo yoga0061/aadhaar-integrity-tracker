@@ -21,6 +21,7 @@ st.set_page_config(
     page_title="Aadhaar Sentinel – Integrity Dashboard",
     layout="wide"
 )
+
 st.markdown(
     """
     <div style="
@@ -36,7 +37,6 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-
 
 st.title("🛡️ Aadhaar Sentinel – Integrity Intelligence Dashboard")
 
@@ -62,11 +62,12 @@ st.sidebar.header("🔎 Filters")
 
 state = st.sidebar.selectbox(
     "Select State",
-    ["All"] + sorted(risk["state"].unique().tolist())
+    ["All"] + sorted(risk["state"].unique())
 )
 
 if state != "All":
     risk = risk[risk["state"] == state]
+    district = district[district["state"] == state]
 
 # --------------------------------------------------
 # KEY METRICS
@@ -75,6 +76,18 @@ col1, col2, col3 = st.columns(3)
 col1.metric("Critical Centers", (risk["severity"]=="Critical").sum())
 col2.metric("Medium Risk Centers", (risk["severity"]=="Medium").sum())
 col3.metric("Total Centers", len(risk))
+
+# --------------------------------------------------
+# FEATURE 4: DISTRICT SUMMARY CARDS
+# --------------------------------------------------
+st.subheader("🏙️ District Risk Snapshot")
+
+top_district = district.sort_values("avg_risk_score", ascending=False).iloc[0]
+
+c1, c2, c3 = st.columns(3)
+c1.metric("Highest Risk District", top_district["district"])
+c2.metric("Avg Risk Score", f"{top_district['avg_risk_score']:.1f}")
+c3.metric("Critical Centers", int(top_district["critical_centers"]))
 
 # --------------------------------------------------
 # FEATURE 1: TOP 10 HIGH-RISK CENTERS
@@ -89,7 +102,17 @@ st.dataframe(
 )
 
 # --------------------------------------------------
-# FEATURE 2: EXPLAINABLE RISK (WHY?)
+# FEATURE 5: DOWNLOAD TOP RISK CENTERS
+# --------------------------------------------------
+st.download_button(
+    "⬇️ Download Top 10 Risky Centers (CSV)",
+    data=top10.to_csv(index=False),
+    file_name="top_10_risky_centers.csv",
+    mime="text/csv"
+)
+
+# --------------------------------------------------
+# FEATURE 2: EXPLAINABLE RISK
 # --------------------------------------------------
 st.subheader("🧠 Why is this Center Risky?")
 
@@ -106,11 +129,30 @@ st.info(
     - Anomaly Days: {int(row['anomaly_days'])}
     - Maximum Daily Spike: {int(row['max_spike'])}
     - Risk Score: {row['risk_score']:.2f}
-    
-    **Interpretation:**  
-    This center shows repeated abnormal activity and unusually high update spikes,
-    which exceeds normal operational behavior.
     """
+)
+
+# --------------------------------------------------
+# FEATURE 6: RISK COMPOSITION (EXPLAINABILITY)
+# --------------------------------------------------
+st.subheader("🧮 Risk Composition")
+
+risk_components = pd.DataFrame({
+    "Component": ["Anomaly Frequency", "Spike Magnitude"],
+    "Contribution": [
+        row["anomaly_days"],
+        row["max_spike"]
+    ]
+})
+
+st.plotly_chart(
+    px.pie(
+        risk_components,
+        names="Component",
+        values="Contribution",
+        title="Risk Contribution Breakdown"
+    ),
+    use_container_width=True
 )
 
 # --------------------------------------------------
@@ -132,16 +174,6 @@ st.subheader("📍 Risk Score Distribution")
 
 st.plotly_chart(
     px.histogram(risk, x="risk_score", color="severity", nbins=30),
-    use_container_width=True
-)
-
-# --------------------------------------------------
-# DISTRICT RISK OVERVIEW
-# --------------------------------------------------
-st.subheader("🗺️ District-Level Risk Index")
-
-st.dataframe(
-    district.sort_values("avg_risk_score", ascending=False),
     use_container_width=True
 )
 
