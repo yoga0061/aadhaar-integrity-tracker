@@ -41,22 +41,29 @@ st.markdown(
 st.title("🛡️ Aadhaar Sentinel – Integrity Intelligence Dashboard")
 
 # --------------------------------------------------
-# LOAD OUTPUTS
+# LOAD FILES SAFELY
 # --------------------------------------------------
-def load(fp, label):
+def load_parquet(fp, label):
     if not os.path.exists(fp):
         st.error(f"Missing required output: {label}")
         st.stop()
     return pd.read_parquet(fp)
 
-risk = load(path("outputs","center_risk_scores.parquet"), "Center Risk Scores")
-district = load(path("outputs","district_risk_index.parquet"), "District Risk Index")
-updates = load(path("outputs","update_type_summary.parquet"), "Update Summary")
+def load_csv(fp, label):
+    if not os.path.exists(fp):
+        st.error(f"Missing required output: {label}")
+        st.stop()
+    return pd.read_csv(fp)
+
+risk = load_parquet(path("outputs","center_risk_scores.parquet"), "Center Risk Scores")
+district = load_parquet(path("outputs","district_risk_index.parquet"), "District Risk Index")
+policy = load_csv(path("outputs","policy_recommendations.csv"), "Policy Recommendations")
+insights = load_csv(path("outputs","insights.csv"), "Insights")
 
 html_fp = path("outputs","aadhaar_integrity_full_report.html")
 
 # --------------------------------------------------
-# SIDEBAR FILTERS
+# SIDEBAR FILTER
 # --------------------------------------------------
 st.sidebar.header("🔎 Filters")
 
@@ -78,19 +85,24 @@ col2.metric("Medium Risk Centers", (risk["severity"]=="Medium").sum())
 col3.metric("Total Centers", len(risk))
 
 # --------------------------------------------------
-# FEATURE 4: DISTRICT SUMMARY CARDS
+# DISTRICT SNAPSHOT (ROBUST)
 # --------------------------------------------------
-st.subheader("🏙️ District Risk Snapshot")
+st.subheader("🏙️ Highest Risk District Snapshot")
 
 top_district = district.sort_values("avg_risk_score", ascending=False).iloc[0]
 
+critical_count = risk[
+    (risk["district"] == top_district["district"]) &
+    (risk["severity"] == "Critical")
+].shape[0]
+
 c1, c2, c3 = st.columns(3)
-c1.metric("Highest Risk District", top_district["district"])
-c2.metric("Avg Risk Score", f"{top_district['avg_risk_score']:.1f}")
-c3.metric("Critical Centers", int(top_district["critical_centers"]))
+c1.metric("District", top_district["district"])
+c2.metric("Avg Risk Score", f"{top_district['avg_risk_score']:.2f}")
+c3.metric("Critical Centers", critical_count)
 
 # --------------------------------------------------
-# FEATURE 1: TOP 10 HIGH-RISK CENTERS
+# TOP 10 HIGH-RISK CENTERS
 # --------------------------------------------------
 st.subheader("🚨 Top 10 Centers Needing Immediate Audit")
 
@@ -101,9 +113,6 @@ st.dataframe(
     use_container_width=True
 )
 
-# --------------------------------------------------
-# FEATURE 5: DOWNLOAD TOP RISK CENTERS
-# --------------------------------------------------
 st.download_button(
     "⬇️ Download Top 10 Risky Centers (CSV)",
     data=top10.to_csv(index=False),
@@ -112,12 +121,12 @@ st.download_button(
 )
 
 # --------------------------------------------------
-# FEATURE 2: EXPLAINABLE RISK
+# EXPLAINABLE RISK
 # --------------------------------------------------
 st.subheader("🧠 Why is this Center Risky?")
 
 selected = st.selectbox(
-    "Select a Center (by Pincode)",
+    "Select Center (by Pincode)",
     top10["pincode"].astype(str)
 )
 
@@ -133,39 +142,44 @@ st.info(
 )
 
 # --------------------------------------------------
-# FEATURE 6: RISK COMPOSITION (EXPLAINABILITY)
+# POLICY RECOMMENDATIONS PANEL (NEW)
 # --------------------------------------------------
-st.subheader("🧮 Risk Composition")
+st.subheader("🏛️ Policy Recommendations")
 
-risk_components = pd.DataFrame({
-    "Component": ["Anomaly Frequency", "Spike Magnitude"],
-    "Contribution": [
-        row["anomaly_days"],
-        row["max_spike"]
-    ]
-})
-
-st.plotly_chart(
-    px.pie(
-        risk_components,
-        names="Component",
-        values="Contribution",
-        title="Risk Contribution Breakdown"
-    ),
+st.dataframe(
+    policy,
     use_container_width=True
 )
 
 # --------------------------------------------------
-# FEATURE 3: AUTO POLICY RECOMMENDATION
+# AUTO INSIGHTS PANEL (NEW)
 # --------------------------------------------------
-st.subheader("🏛️ Recommended Action for UIDAI")
+st.subheader("💡 Key System Insights")
 
-if row["severity"] == "Critical":
-    st.error("🔴 Immediate audit, operator verification, and system access review recommended.")
-elif row["severity"] == "Medium":
-    st.warning("🟠 Increase monitoring frequency and conduct random inspections.")
-else:
-    st.success("🟢 Routine monitoring sufficient.")
+for _, r in insights.iterrows():
+    st.markdown(f"• **{r.iloc[0]}**")
+
+# --------------------------------------------------
+# DISTRICT RISK HEATMAP (NEW, SAFE)
+# --------------------------------------------------
+st.subheader("🗺️ District Risk Heatmap")
+
+heatmap_df = district.pivot_table(
+    index="district",
+    columns="state",
+    values="avg_risk_score",
+    fill_value=0
+)
+
+st.plotly_chart(
+    px.imshow(
+        heatmap_df,
+        aspect="auto",
+        color_continuous_scale="Reds",
+        title="District-wise Average Risk Score Heatmap"
+    ),
+    use_container_width=True
+)
 
 # --------------------------------------------------
 # RISK DISTRIBUTION
@@ -174,16 +188,6 @@ st.subheader("📍 Risk Score Distribution")
 
 st.plotly_chart(
     px.histogram(risk, x="risk_score", color="severity", nbins=30),
-    use_container_width=True
-)
-
-# --------------------------------------------------
-# UPDATE TYPE ANOMALIES
-# --------------------------------------------------
-st.subheader("⚠️ Anomalies by Update Type")
-
-st.plotly_chart(
-    px.bar(updates, x="update_type", y="anomaly_days"),
     use_container_width=True
 )
 
