@@ -24,9 +24,15 @@ st.set_page_config(
 
 st.markdown(
     """
-    <div style="background:#E3F2FD;padding:16px;border-left:6px solid #0D47A1;">
-    <b>🎯 Demo Mode – UIDAI Hackathon 2026</b><br>
-    Precomputed, anonymized Aadhaar integrity analytics for audit decision-making.
+    <div style="
+        background:#FFFFFF;
+        padding:16px;
+        border:1px solid #CCCCCC;
+        color:#000000;
+        font-size:16px;
+    ">
+        <b>🎯 Demo Mode – UIDAI Hackathon 2026</b><br>
+        Precomputed, anonymized Aadhaar integrity analytics for audit decision-making.
     </div>
     """,
     unsafe_allow_html=True
