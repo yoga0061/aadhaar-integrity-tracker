@@ -2,18 +2,27 @@ import sys
 import os
 
 # --------------------------------------------------
-# PATH SETUP (allow Streamlit to access src/)
+# PATH SETUP (CRITICAL)
 # --------------------------------------------------
-BASE_DIR = os.path.dirname(__file__)
-SRC_DIR = os.path.join(BASE_DIR, "..", "src")
-sys.path.append(SRC_DIR)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
+SRC_DIR = os.path.join(PROJECT_ROOT, "src")
 
+sys.path.insert(0, SRC_DIR)
+
+# --------------------------------------------------
+# IMPORTS
+# --------------------------------------------------
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-from utils import path
-from pipeline.run_pipeline import run_analysis_pipeline   # ✅ your pipeline
+# Import your existing analysis scripts from src/
+import preprocessing
+import clean_and_merge_raw_data
+import anomaly_detection
+import risk_scoring
+import consolidate_results
 
 # --------------------------------------------------
 # STREAMLIT CONFIG
@@ -26,24 +35,44 @@ st.set_page_config(
 st.title("🛡️ Aadhaar Integrity Dashboard")
 
 # --------------------------------------------------
-# ENSURE OUTPUT DIRECTORY EXISTS
+# OUTPUT PATHS
 # --------------------------------------------------
-os.makedirs(path("outputs"), exist_ok=True)
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "outputs")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+CENTER_RISK_FP = os.path.join(OUTPUT_DIR, "center_risk_scores.parquet")
+UPDATE_SUMMARY_FP = os.path.join(OUTPUT_DIR, "update_type_summary.parquet")
 
 # --------------------------------------------------
-# SAFE LOAD OR GENERATE FUNCTION
+# PIPELINE RUNNER (CORE FIX)
+# --------------------------------------------------
+def run_analysis_pipeline():
+    """
+    Runs the full Aadhaar Integrity analytics pipeline.
+    Must generate required parquet files in outputs/.
+    """
+
+    st.info("⚙️ Running analytics pipeline (first-time setup)...")
+
+    # Each of these files MUST have a run() function
+    preprocessing.run()
+    clean_and_merge_raw_data.run()
+    anomaly_detection.run()
+    risk_scoring.run()              # → center_risk_scores.parquet
+    consolidate_results.run()       # → update_type_summary.parquet
+
+    st.success("✅ Analytics pipeline completed")
+
+# --------------------------------------------------
+# SAFE LOAD OR GENERATE
 # --------------------------------------------------
 def load_or_generate(fp: str):
-    """
-    Loads a parquet file.
-    If missing (Streamlit Cloud), runs pipeline to generate outputs.
-    """
     if not os.path.exists(fp):
-        with st.spinner("🔄 Generating analytics data (first-time setup)..."):
+        with st.spinner("🔄 Generating analytics data..."):
             run_analysis_pipeline()
 
     if not os.path.exists(fp):
-        st.error(f"Pipeline did not generate required file: {fp}")
+        st.error(f"Required file not generated: {fp}")
         st.stop()
 
     return pd.read_parquet(fp)
@@ -51,11 +80,8 @@ def load_or_generate(fp: str):
 # --------------------------------------------------
 # LOAD DATA
 # --------------------------------------------------
-risk_path = path("outputs", "center_risk_scores.parquet")
-updates_path = path("outputs", "update_type_summary.parquet")
-
-risk = load_or_generate(risk_path)
-updates = load_or_generate(updates_path)
+risk = load_or_generate(CENTER_RISK_FP)
+updates = load_or_generate(UPDATE_SUMMARY_FP)
 
 # --------------------------------------------------
 # METRICS
@@ -113,7 +139,7 @@ fig2 = px.bar(
 st.plotly_chart(fig2, use_container_width=True)
 
 # --------------------------------------------------
-# DATA PREVIEW (OPTIONAL, JUDGES LOVE THIS)
+# DATA PREVIEW (OPTIONAL, GOOD FOR JUDGES)
 # --------------------------------------------------
 with st.expander("🔍 View Sample Risk Data"):
     st.dataframe(risk.head(20))
