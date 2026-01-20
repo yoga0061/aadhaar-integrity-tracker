@@ -41,29 +41,37 @@ st.markdown(
 st.title("🛡️ Aadhaar Sentinel – Integrity Intelligence Dashboard")
 
 # --------------------------------------------------
-# LOAD FILES SAFELY
+# SAFE LOADERS
 # --------------------------------------------------
 def load_parquet(fp, label):
     if not os.path.exists(fp):
-        st.error(f"Missing required output: {label}")
+        st.error(f"Missing required file: {label}")
         st.stop()
     return pd.read_parquet(fp)
 
 def load_csv(fp, label):
     if not os.path.exists(fp):
-        st.error(f"Missing required output: {label}")
+        st.error(f"Missing required file: {label}")
         st.stop()
     return pd.read_csv(fp)
 
+# --------------------------------------------------
+# LOAD DATA (ONLY FILES YOU HAVE)
+# --------------------------------------------------
 risk = load_parquet(path("outputs","center_risk_scores.parquet"), "Center Risk Scores")
 district = load_parquet(path("outputs","district_risk_index.parquet"), "District Risk Index")
+activity = load_parquet(path("outputs","daily_center_activity.parquet"), "Daily Center Activity")
+anomalies = load_parquet(path("outputs","anomalies.parquet"), "Anomalies")
+updates = load_parquet(path("outputs","update_type_summary.parquet"), "Update Type Summary")
+
 policy = load_csv(path("outputs","policy_recommendations.csv"), "Policy Recommendations")
 insights = load_csv(path("outputs","insights.csv"), "Insights")
+audit = load_csv(path("outputs","audit_report.csv"), "Audit Report")
 
-html_fp = path("outputs","aadhaar_integrity_full_report.html")
+html_fp = path("outputs","aadhaar_integrity_report.html")
 
 # --------------------------------------------------
-# SIDEBAR FILTER
+# SIDEBAR FILTERS
 # --------------------------------------------------
 st.sidebar.header("🔎 Filters")
 
@@ -75,17 +83,20 @@ state = st.sidebar.selectbox(
 if state != "All":
     risk = risk[risk["state"] == state]
     district = district[district["state"] == state]
+    activity = activity[activity["state"] == state]
+    anomalies = anomalies[anomalies["state"] == state]
+    audit = audit[audit["state"] == state]
 
 # --------------------------------------------------
 # KEY METRICS
 # --------------------------------------------------
-col1, col2, col3 = st.columns(3)
-col1.metric("Critical Centers", (risk["severity"]=="Critical").sum())
-col2.metric("Medium Risk Centers", (risk["severity"]=="Medium").sum())
-col3.metric("Total Centers", len(risk))
+c1, c2, c3 = st.columns(3)
+c1.metric("Critical Centers", (risk["severity"]=="Critical").sum())
+c2.metric("Medium Risk Centers", (risk["severity"]=="Medium").sum())
+c3.metric("Total Centers Monitored", len(risk))
 
 # --------------------------------------------------
-# DISTRICT SNAPSHOT (ROBUST)
+# DISTRICT SNAPSHOT (FIXED & ROBUST)
 # --------------------------------------------------
 st.subheader("🏙️ Highest Risk District Snapshot")
 
@@ -96,13 +107,13 @@ critical_count = risk[
     (risk["severity"] == "Critical")
 ].shape[0]
 
-c1, c2, c3 = st.columns(3)
-c1.metric("District", top_district["district"])
-c2.metric("Avg Risk Score", f"{top_district['avg_risk_score']:.2f}")
-c3.metric("Critical Centers", critical_count)
+d1, d2, d3 = st.columns(3)
+d1.metric("District", top_district["district"])
+d2.metric("Avg Risk Score", f"{top_district['avg_risk_score']:.2f}")
+d3.metric("Critical Centers", critical_count)
 
 # --------------------------------------------------
-# TOP 10 HIGH-RISK CENTERS
+# TOP 10 RISKY CENTERS
 # --------------------------------------------------
 st.subheader("🚨 Top 10 Centers Needing Immediate Audit")
 
@@ -125,42 +136,67 @@ st.download_button(
 # --------------------------------------------------
 st.subheader("🧠 Why is this Center Risky?")
 
-selected = st.selectbox(
-    "Select Center (by Pincode)",
+selected_pin = st.selectbox(
+    "Select Center (Pincode)",
     top10["pincode"].astype(str)
 )
 
-row = risk[risk["pincode"].astype(str) == selected].iloc[0]
+row = risk[risk["pincode"].astype(str) == selected_pin].iloc[0]
 
 st.info(
     f"""
     **Risk Explanation**
     - Anomaly Days: {int(row['anomaly_days'])}
-    - Maximum Daily Spike: {int(row['max_spike'])}
+    - Max Daily Spike: {int(row['max_spike'])}
     - Risk Score: {row['risk_score']:.2f}
     """
 )
 
 # --------------------------------------------------
-# POLICY RECOMMENDATIONS PANEL (NEW)
+# SYSTEM CONFIDENCE SCORE
 # --------------------------------------------------
-st.subheader("🏛️ Policy Recommendations")
+st.subheader("🧠 System Confidence Indicator")
 
-st.dataframe(
-    policy,
+confidence = min(
+    100,
+    int((row["anomaly_days"] / max(1, risk["anomaly_days"].max())) * 100)
+)
+
+st.progress(confidence)
+st.caption(f"Confidence Score: {confidence}/100 based on anomaly consistency")
+
+# --------------------------------------------------
+# CENTER ACTIVITY TIMELINE
+# --------------------------------------------------
+st.subheader("⏳ Center Activity Timeline")
+
+center_ts = activity[activity["pincode"].astype(str) == selected_pin]
+
+st.plotly_chart(
+    px.line(
+        center_ts,
+        x="date",
+        y="daily_updates",
+        title=f"Daily Activity Trend – Pincode {selected_pin}"
+    ),
     use_container_width=True
 )
 
 # --------------------------------------------------
-# AUTO INSIGHTS PANEL (NEW)
+# ANOMALY REASONS SUMMARY
 # --------------------------------------------------
-st.subheader("💡 Key System Insights")
+st.subheader("🧾 Common Anomaly Reasons")
 
-for _, r in insights.iterrows():
-    st.markdown(f"• **{r.iloc[0]}**")
+reason_counts = anomalies["anomaly_reason"].value_counts().reset_index()
+reason_counts.columns = ["Reason","Count"]
+
+st.plotly_chart(
+    px.bar(reason_counts, x="Reason", y="Count"),
+    use_container_width=True
+)
 
 # --------------------------------------------------
-# DISTRICT RISK HEATMAP (NEW, SAFE)
+# DISTRICT RISK HEATMAP (SAFE MATRIX)
 # --------------------------------------------------
 st.subheader("🗺️ District Risk Heatmap")
 
@@ -176,32 +212,76 @@ st.plotly_chart(
         heatmap_df,
         aspect="auto",
         color_continuous_scale="Reds",
-        title="District-wise Average Risk Score Heatmap"
+        title="District-wise Average Risk Score"
     ),
     use_container_width=True
 )
 
 # --------------------------------------------------
-# RISK DISTRIBUTION
+# POLICY RECOMMENDATIONS
 # --------------------------------------------------
-st.subheader("📍 Risk Score Distribution")
+st.subheader("🏛️ Policy Recommendations")
 
-st.plotly_chart(
-    px.histogram(risk, x="risk_score", color="severity", nbins=30),
+st.dataframe(policy, use_container_width=True)
+
+# --------------------------------------------------
+# AUTO INSIGHTS PANEL
+# --------------------------------------------------
+st.subheader("💡 Key System Insights")
+
+for _, r in insights.iterrows():
+    st.markdown(f"• **{r.iloc[0]}**")
+
+# --------------------------------------------------
+# LIVE AUDIT QUEUE
+# --------------------------------------------------
+st.subheader("🚨 Live Audit Queue")
+
+audit_queue = audit[audit["severity"].isin(["Critical","Medium"])] \
+    .sort_values("risk_score", ascending=False)
+
+st.dataframe(
+    audit_queue.head(25),
     use_container_width=True
 )
 
 # --------------------------------------------------
-# HTML REPORT DOWNLOAD
+# EVIDENCE PACK DOWNLOADS
+# --------------------------------------------------
+st.subheader("📦 Evidence Pack for Auditors")
+
+st.download_button(
+    "⬇️ Audit Report (CSV)",
+    data=audit.to_csv(index=False),
+    file_name="audit_report.csv",
+    mime="text/csv"
+)
+
+st.download_button(
+    "⬇️ Policy Recommendations (CSV)",
+    data=policy.to_csv(index=False),
+    file_name="policy_recommendations.csv",
+    mime="text/csv"
+)
+
+st.download_button(
+    "⬇️ Insights (CSV)",
+    data=insights.to_csv(index=False),
+    file_name="insights.csv",
+    mime="text/csv"
+)
+
+# --------------------------------------------------
+# FULL HTML REPORT
 # --------------------------------------------------
 st.subheader("📄 Full Audit Report")
 
 if os.path.exists(html_fp):
     with open(html_fp, "rb") as f:
         st.download_button(
-            "⬇️ Download HTML Integrity Report",
+            "⬇️ Download Full HTML Integrity Report",
             data=f,
-            file_name="aadhaar_integrity_full_report.html",
+            file_name="aadhaar_integrity_report.html",
             mime="text/html"
         )
 
