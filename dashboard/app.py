@@ -42,13 +42,13 @@ st.markdown(
 st.title("🛡️ Aadhaar Sentinel – Integrity Intelligence Dashboard")
 
 # --------------------------------------------------
-# SIDEBAR: FILE UPLOAD
+# SIDEBAR: UPLOAD PANEL
 # --------------------------------------------------
-st.sidebar.header("📤 Upload Data (Optional)")
+st.sidebar.header("📤 Upload Aadhaar Data (Optional)")
 
 uploaded_files = st.sidebar.file_uploader(
-    "Upload Aadhaar Analysis Files",
-    type=["parquet", "csv"],
+    "Upload Aadhaar Files (CSV / Parquet)",
+    type=["csv", "parquet"],
     accept_multiple_files=True
 )
 
@@ -63,12 +63,12 @@ def save_uploaded_files(files):
 
 def auto_generate_outputs(progress):
     """
-    Generate missing outputs from daily_center_activity.parquet
+    Generates required outputs from daily_center_activity.parquet
     """
     activity_fp = path("outputs", "daily_center_activity.parquet")
 
     if not os.path.exists(activity_fp):
-        st.error("❌ daily_center_activity.parquet required to auto-generate outputs")
+        st.error("❌ daily_center_activity.parquet is required for auto analysis")
         return
 
     progress.progress(10)
@@ -77,7 +77,7 @@ def auto_generate_outputs(progress):
     activity = pd.read_parquet(activity_fp)
 
     # ------------------ ANOMALIES ------------------
-    progress.progress(25)
+    progress.progress(30)
     anomalies = activity[
         activity["daily_updates"] >
         activity["daily_updates"].mean() + 3 * activity["daily_updates"].std()
@@ -86,7 +86,7 @@ def auto_generate_outputs(progress):
     anomalies.to_parquet(path("outputs","anomalies.parquet"), index=False)
 
     # ------------------ CENTER RISK ----------------
-    progress.progress(45)
+    progress.progress(55)
     grp = activity.groupby(["state","district","pincode"])
 
     risk = grp["daily_updates"].agg(
@@ -107,7 +107,7 @@ def auto_generate_outputs(progress):
     risk.to_parquet(path("outputs","center_risk_scores.parquet"), index=False)
 
     # ------------------ DISTRICT RISK --------------
-    progress.progress(70)
+    progress.progress(80)
     district = risk.groupby(["state","district"]).agg(
         avg_risk_score=("risk_score","mean"),
         total_centers=("pincode","count")
@@ -128,16 +128,16 @@ if uploaded_files:
         save_uploaded_files(uploaded_files)
 
         progress = st.sidebar.progress(0)
-        st.sidebar.info("Running integrity analytics...")
+        st.sidebar.info("Running integrity analysis...")
 
-        required = [
+        required_outputs = [
             "center_risk_scores.parquet",
             "anomalies.parquet",
             "district_risk_index.parquet"
         ]
 
         missing = [
-            f for f in required
+            f for f in required_outputs
             if not os.path.exists(path("outputs", f))
         ]
 
@@ -162,15 +162,17 @@ def load_csv(fp):
     return pd.read_csv(fp)
 
 # --------------------------------------------------
-# LOAD OUTPUTS
+# LOAD DATA
 # --------------------------------------------------
 risk = load_parquet(path("outputs","center_risk_scores.parquet"), "Center Risk Scores")
 district = load_parquet(path("outputs","district_risk_index.parquet"), "District Risk Index")
 activity = load_parquet(path("outputs","daily_center_activity.parquet"), "Daily Activity")
 anomalies = load_parquet(path("outputs","anomalies.parquet"), "Anomalies")
-audit = load_csv(path("outputs","audit_report.csv"))
+updates = load_parquet(path("outputs","update_type_summary.parquet"), "Update Summary")
+
 policy = load_csv(path("outputs","policy_recommendations.csv"))
 insights = load_csv(path("outputs","insights.csv"))
+audit = load_csv(path("outputs","audit_report.csv"))
 
 html_fp = path("outputs","aadhaar_integrity_report.html")
 
@@ -179,60 +181,53 @@ if risk is None or district is None:
     st.stop()
 
 # --------------------------------------------------
-# DASHBOARD METRICS
+# DASHBOARD CONTENT (UNCHANGED LOGIC)
 # --------------------------------------------------
 c1, c2, c3 = st.columns(3)
 c1.metric("Critical Centers", (risk["severity"]=="Critical").sum())
 c2.metric("Medium Risk Centers", (risk["severity"]=="Medium").sum())
-c3.metric("Total Centers", len(risk))
+c3.metric("Total Centers Monitored", len(risk))
+
+st.subheader("🏙️ Highest Risk District Snapshot")
+
+top_district = district.sort_values("avg_risk_score", ascending=False).iloc[0]
+
+critical_count = risk[
+    (risk["district"] == top_district["district"]) &
+    (risk["severity"] == "Critical")
+].shape[0]
+
+d1, d2, d3 = st.columns(3)
+d1.metric("District", top_district["district"])
+d2.metric("Avg Risk Score", f"{top_district['avg_risk_score']:.2f}")
+d3.metric("Critical Centers", critical_count)
 
 # --------------------------------------------------
-# DISTRICT HEATMAP + TOP 5 + LEGEND
+# DISTRICT HEATMAP
 # --------------------------------------------------
-st.subheader("🗺️ District Risk Intelligence")
+st.subheader("🗺️ District Risk Heatmap")
 
-left, right = st.columns([3,1])
+heatmap_df = district.pivot_table(
+    index="district",
+    columns="state",
+    values="avg_risk_score",
+    fill_value=0
+)
 
-with left:
-    heat_df = district.pivot_table(
-        index="district",
-        columns="state",
-        values="avg_risk_score",
-        fill_value=0
-    )
-
-    fig = px.imshow(
-        heat_df,
+st.plotly_chart(
+    px.imshow(
+        heatmap_df,
         aspect="auto",
         color_continuous_scale="YlOrRd",
-        zmin=heat_df.values.min(),
-        zmax=heat_df.values.max(),
+        zmin=heatmap_df.values.min(),
+        zmax=heatmap_df.values.max(),
         title="District-wise Average Risk Score"
-    )
-
-    fig.update_traces(
-        hovertemplate=
-        "<b>District:</b> %{y}<br>"
-        "<b>State:</b> %{x}<br>"
-        "<b>Avg Risk:</b> %{z:.2f}<extra></extra>"
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-with right:
-    st.markdown("### 🚨 Top 5 High-Risk Districts")
-    top5 = district.sort_values("avg_risk_score", ascending=False).head(5)
-    for _, r in top5.iterrows():
-        st.markdown(f"**{r['district']}** ({r['state']}) – `{r['avg_risk_score']:.2f}`")
-
-    st.markdown("---")
-    st.markdown("### 🎯 Severity Legend")
-    st.markdown("🔴 **Critical** – Immediate audit")
-    st.markdown("🟠 **Medium** – Increased monitoring")
-    st.markdown("🟢 **Low** – Routine observation")
+    ),
+    use_container_width=True
+)
 
 # --------------------------------------------------
-# AUTO INSIGHTS
+# INSIGHTS
 # --------------------------------------------------
 if insights is not None:
     st.subheader("💡 Key System Insights")
@@ -240,13 +235,13 @@ if insights is not None:
         st.markdown(f"• **{r.iloc[0]}**")
 
 # --------------------------------------------------
-# HTML REPORT DOWNLOAD
+# HTML REPORT
 # --------------------------------------------------
 if os.path.exists(html_fp):
     st.subheader("📄 Full Audit Report")
     with open(html_fp, "rb") as f:
         st.download_button(
-            "⬇️ Download HTML Integrity Report",
+            "⬇️ Download Full HTML Integrity Report",
             f,
             file_name="aadhaar_integrity_report.html",
             mime="text/html"
