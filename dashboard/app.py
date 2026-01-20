@@ -33,7 +33,7 @@ st.markdown(
         font-size:16px;
     ">
         <b>🎯 Demo Mode – UIDAI Hackathon 2026</b><br>
-        Upload Aadhaar activity data → Auto-generate integrity intelligence.
+        Precomputed, anonymized Aadhaar integrity analytics for audit decision-making.
     </div>
     """,
     unsafe_allow_html=True
@@ -42,7 +42,7 @@ st.markdown(
 st.title("🛡️ Aadhaar Sentinel – Integrity Intelligence Dashboard")
 
 # --------------------------------------------------
-# SIDEBAR: UPLOAD PANEL
+# SIDEBAR: UPLOAD PANEL (NEW FEATURE)
 # --------------------------------------------------
 st.sidebar.header("📤 Upload Aadhaar Data (Optional)")
 
@@ -53,7 +53,7 @@ uploaded_files = st.sidebar.file_uploader(
 )
 
 # --------------------------------------------------
-# UTILITIES
+# UTILITIES (NEW)
 # --------------------------------------------------
 def save_uploaded_files(files):
     os.makedirs(path("outputs"), exist_ok=True)
@@ -63,20 +63,20 @@ def save_uploaded_files(files):
 
 def auto_generate_outputs(progress):
     """
-    Generates required outputs from daily_center_activity.parquet
+    Generate required outputs from daily_center_activity.parquet
     """
     activity_fp = path("outputs", "daily_center_activity.parquet")
 
     if not os.path.exists(activity_fp):
-        st.error("❌ daily_center_activity.parquet is required for auto analysis")
+        st.error("❌ daily_center_activity.parquet is required to auto-generate outputs")
         return
 
     progress.progress(10)
-    time.sleep(0.3)
+    time.sleep(0.2)
 
     activity = pd.read_parquet(activity_fp)
 
-    # ------------------ ANOMALIES ------------------
+    # ---------- ANOMALIES ----------
     progress.progress(30)
     anomalies = activity[
         activity["daily_updates"] >
@@ -85,7 +85,7 @@ def auto_generate_outputs(progress):
     anomalies["anomaly_reason"] = "Volume Spike"
     anomalies.to_parquet(path("outputs","anomalies.parquet"), index=False)
 
-    # ------------------ CENTER RISK ----------------
+    # ---------- CENTER RISK ----------
     progress.progress(55)
     grp = activity.groupby(["state","district","pincode"])
 
@@ -106,7 +106,7 @@ def auto_generate_outputs(progress):
 
     risk.to_parquet(path("outputs","center_risk_scores.parquet"), index=False)
 
-    # ------------------ DISTRICT RISK --------------
+    # ---------- DISTRICT RISK ----------
     progress.progress(80)
     district = risk.groupby(["state","district"]).agg(
         avg_risk_score=("risk_score","mean"),
@@ -116,10 +116,10 @@ def auto_generate_outputs(progress):
     district.to_parquet(path("outputs","district_risk_index.parquet"), index=False)
 
     progress.progress(100)
-    time.sleep(0.3)
+    time.sleep(0.2)
 
 # --------------------------------------------------
-# RUN ANALYSIS BUTTON
+# RUN ANALYSIS BUTTON (NEW)
 # --------------------------------------------------
 if uploaded_files:
     st.sidebar.success(f"{len(uploaded_files)} file(s) uploaded")
@@ -145,10 +145,10 @@ if uploaded_files:
             auto_generate_outputs(progress)
 
         st.sidebar.success("✅ Analysis completed")
-        st.experimental_rerun()
+        st.rerun()   # ✅ FIXED (was experimental_rerun)
 
 # --------------------------------------------------
-# SAFE LOADERS
+# SAFE LOADERS (UNCHANGED)
 # --------------------------------------------------
 def load_parquet(fp, label):
     if not os.path.exists(fp):
@@ -156,23 +156,24 @@ def load_parquet(fp, label):
         return None
     return pd.read_parquet(fp)
 
-def load_csv(fp):
+def load_csv(fp, label):
     if not os.path.exists(fp):
+        st.warning(f"{label} not found")
         return None
     return pd.read_csv(fp)
 
 # --------------------------------------------------
-# LOAD DATA
+# LOAD DATA (UNCHANGED)
 # --------------------------------------------------
 risk = load_parquet(path("outputs","center_risk_scores.parquet"), "Center Risk Scores")
 district = load_parquet(path("outputs","district_risk_index.parquet"), "District Risk Index")
-activity = load_parquet(path("outputs","daily_center_activity.parquet"), "Daily Activity")
+activity = load_parquet(path("outputs","daily_center_activity.parquet"), "Daily Center Activity")
 anomalies = load_parquet(path("outputs","anomalies.parquet"), "Anomalies")
-updates = load_parquet(path("outputs","update_type_summary.parquet"), "Update Summary")
+updates = load_parquet(path("outputs","update_type_summary.parquet"), "Update Type Summary")
 
-policy = load_csv(path("outputs","policy_recommendations.csv"))
-insights = load_csv(path("outputs","insights.csv"))
-audit = load_csv(path("outputs","audit_report.csv"))
+policy = load_csv(path("outputs","policy_recommendations.csv"), "Policy Recommendations")
+insights = load_csv(path("outputs","insights.csv"), "Insights")
+audit = load_csv(path("outputs","audit_report.csv"), "Audit Report")
 
 html_fp = path("outputs","aadhaar_integrity_report.html")
 
@@ -181,7 +182,7 @@ if risk is None or district is None:
     st.stop()
 
 # --------------------------------------------------
-# DASHBOARD CONTENT (UNCHANGED LOGIC)
+# DASHBOARD (YOUR ORIGINAL LOGIC – UNCHANGED)
 # --------------------------------------------------
 c1, c2, c3 = st.columns(3)
 c1.metric("Critical Centers", (risk["severity"]=="Critical").sum())
